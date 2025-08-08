@@ -45,10 +45,19 @@ class DynamicTypeApp(Bottle):
         self.default_error_handler = self.custom_error_handler
 
     def custom_error_handler(self, error):
+        print("=== error handler", type(error), error)
         response.content_type = "application/json"
-        if isinstance(error.exception, sqlite3.Error):
+        if isinstance(error, HTTPError) and isinstance(error.exception, sqlite3.Error):
             response.status = 500
             return json.dumps({"error": f"Database error: {str(error.exception)}"})
+        elif isinstance(error, HTTPError) and isinstance(
+            error.exception, json.JSONDecodeError
+        ):
+            response.status = 400
+            return json.dumps({"error": f"JSON decode error: {str(error.exception)}"})
+        elif isinstance(error, HTTPError):
+            response.status = error.status_code
+            return json.dumps({"error": error.body})
         elif isinstance(error.exception, json.JSONDecodeError):
             response.status = 400
             return json.dumps({"error": f"JSON decode error: {str(error.exception)}"})
@@ -88,9 +97,7 @@ class DynamicTypeApp(Bottle):
             col_type = self.json_prop_type_to_sql_type(
                 prop_schema.get("type", "string")
             )
-            columns.append(
-                f"{prop_name} {col_type}"
-            )  # Use prop_name directly (validated as legal)
+            columns.append(f"{prop_name} {col_type}")
         columns.append("extra_properties TEXT")  # Add JSON column for extra properties
 
         # Create table
@@ -121,6 +128,13 @@ class DynamicTypeApp(Bottle):
             "status": {"type": "integer"},
         }
         missing_props = [prop for prop in mandatory_props if prop not in properties]
+        print(
+            "==== here",
+            missing_props,
+            f"Type schema must include properties: {', '.join(missing_props)}",
+            "=====",
+        )
+
         if missing_props:
             raise HTTPError(
                 HTTPStatus.BAD_REQUEST,
