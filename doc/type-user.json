@@ -1,0 +1,13 @@
+{
+  "title": "user_type",
+  "type": "object",
+  "properties": {
+    "title": { "type": "string" },
+    "icon": { "type": "string" },
+    "status": { "type": "integer" },
+    "email": { "type": "string", "format": "email" },
+    "phone": { "type": "string", "format": "phone" },
+    "birth_date": { "type": "string", "format": "date" }
+  },
+  "required": ["title", "icon", "status"]
+}
