@@ -6,7 +6,7 @@ import json
 import re
 
 
-class CustomBottle(Bottle):
+class DynamicTypeApp(Bottle):
     def __init__(self, database="dynamic_tables.db", test_mode=False):
         super().__init__()
         self._test_mode = test_mode
@@ -45,20 +45,20 @@ class CustomBottle(Bottle):
         self.default_error_handler = self.custom_error_handler
 
     def custom_error_handler(self, error):
-        # Handle HTTPError (e.g., 404, 409)
-        if isinstance(error, HTTPError):
-            response.status = error.status_code
-            return {"error": error.body if error.body else "Unknown error"}
-
-        # Handle SQLite database errors
-        elif isinstance(error, sqlite3.Error):
-            response.status = HTTPStatus.INTERNAL_SERVER_ERROR
-            return {"error": f"Database error: {str(error)}"}
-
-        # Handle all other exceptions
-        else:
-            response.status = HTTPStatus.BAD_REQUEST
-            return {"error": str(error)}
+        response.content_type = "application/json"
+        if isinstance(error.exception, sqlite3.Error):
+            response.status = 500
+            return json.dumps({"error": f"Database error: {str(error.exception)}"})
+        elif isinstance(error.exception, json.JSONDecodeError):
+            response.status = 400
+            return json.dumps({"error": f"JSON decode error: {str(error.exception)}"})
+        elif isinstance(error.exception, ValidationError):
+            response.status = 400
+            return json.dumps(
+                {"error": f"Schema validation error: {str(error.exception)}"}
+            )
+        response.status = 400
+        return json.dumps({"error": f"Unexpected error: {str(error.exception)}"})
 
     def json_prop_type_to_sql_type(self, json_type):
         """Map JSON schema types to SQLite types."""

@@ -1,0 +1,4 @@
+[run]
+source = type_app.py
+omit =
+    tests/*
