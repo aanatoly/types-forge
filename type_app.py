@@ -128,13 +128,6 @@ class DynamicTypeApp(Bottle):
             "status": {"type": "integer"},
         }
         missing_props = [prop for prop in mandatory_props if prop not in properties]
-        print(
-            "==== here",
-            missing_props,
-            f"Type schema must include properties: {', '.join(missing_props)}",
-            "=====",
-        )
-
         if missing_props:
             raise HTTPError(
                 HTTPStatus.BAD_REQUEST,
@@ -276,8 +269,12 @@ class DynamicTypeApp(Bottle):
         try:
             validate(instance=data, schema=type_schema)
         except ValidationError as e:
+            print("=== object validation:", type(e), vars(e), e)
             response.status = HTTPStatus.BAD_REQUEST
-            return {"error": "Validation failed", "details": e.message}
+            return {
+                "error": "Validation failed",
+                "details": {"path": f"{'/'.join(e.path)}", "message": e.message},
+            }
 
         # Separate schema-defined properties and extra properties
         properties = type_schema.get("properties", {})

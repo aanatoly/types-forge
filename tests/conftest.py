@@ -32,3 +32,10 @@ def valid_type_schema():
         "propertyNames": {"pattern": "^[a-zA-Z0-9_]+$"},
         "required": ["title", "icon", "status"],
     }
+
+
+@pytest.fixture
+def valid_type(test_client, valid_type_schema):
+    """Install valid type and returns its schema."""
+    test_client.post_json("/types", valid_type_schema)
+    return valid_type_schema

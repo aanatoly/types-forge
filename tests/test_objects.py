@@ -5,15 +5,14 @@ from unittest.mock import Mock
 
 
 @pytest.fixture
-def valid_object_data(test_client, valid_type_schema):
+def valid_object_data():
     """Provide valid object data matching valid_type_schema."""
-    test_client.post_json("/types", valid_type_schema)
     return {"title": "Test Object", "icon": "icon.png", "status": 1, "extra_field": 42}
 
 
-def test_objects_post_valid(test_client, valid_type_schema, valid_object_data):
+def test_objects_post_valid(test_client, valid_type, valid_object_data):
     """Test POST /objects/<type_id> with valid object data."""
-    type_id = valid_type_schema["title"]
+    type_id = valid_type["title"]
     response = test_client.post_json(f"/objects/{type_id}", valid_object_data)
     assert response.status_code == HTTPStatus.OK
     data = response.json
@@ -22,9 +21,9 @@ def test_objects_post_valid(test_client, valid_type_schema, valid_object_data):
     assert isinstance(data["object_id"], int)
 
 
-def test_objects_post_minimal(test_client, valid_type_schema):
+def test_objects_post_minimal(test_client, valid_type):
     """Test POST /objects/<type_id> with minimal valid data."""
-    type_id = valid_type_schema["title"]
+    type_id = valid_type["title"]
     minimal_data = {"title": "Minimal Object", "icon": "min.png", "status": 0}
     response = test_client.post_json(f"/objects/{type_id}", minimal_data)
     assert response.status_code == HTTPStatus.OK
@@ -33,9 +32,9 @@ def test_objects_post_minimal(test_client, valid_type_schema):
     assert "object_id" in data
 
 
-def test_objects_post_invalid_schema(test_client, valid_type_schema):
+def test_objects_post_invalid_schema(test_client, valid_type):
     """Test POST /objects/<type_id> with invalid schema data."""
-    type_id = valid_type_schema["title"]
+    type_id = valid_type["title"]
     invalid_data = {
         "title": "Invalid Object",
         "icon": "invalid.png",
@@ -46,21 +45,26 @@ def test_objects_post_invalid_schema(test_client, valid_type_schema):
     )
     assert response.status_code == HTTPStatus.BAD_REQUEST
     data = response.json
-    assert "error" in data
-    assert "Schema validation error" in data["error"]
+    assert data == {
+        "error": "Validation failed",
+        "details": {"path": "status", "message": "'invalid' is not of type 'integer'"},
+    }
 
 
-def test_objects_post_missing_required(test_client, valid_type_schema):
+def test_objects_post_missing_required(test_client, valid_type):
     """Test POST /objects/<type_id> with missing required property."""
-    type_id = valid_type_schema["title"]
+    type_id = valid_type["title"]
     incomplete_data = {"title": "Incomplete Object", "icon": "incomplete.png"}
     response = test_client.post_json(
         f"/objects/{type_id}", incomplete_data, expect_errors=True
     )
     assert response.status_code == HTTPStatus.BAD_REQUEST
     data = response.json
-    assert "error" in data
-    assert "Schema validation error" in data["error"]
+    print("=== error", data)
+    assert data == {
+        "error": "Validation failed",
+        "details": {"path": "", "message": "'status' is a required property"},
+    }
 
 
 def test_objects_post_non_existent_type(test_client, valid_object_data):

@@ -59,7 +59,6 @@ def test_types_get_database_error(test_client, app, mocker):
     response = test_client.get("/types", status="*", expect_errors=True)
     assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
     data = response.json
-    print("=== here", data)
     assert data["error"] == "Database error: Database failure"
 
 
