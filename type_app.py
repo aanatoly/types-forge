@@ -26,25 +26,27 @@ class DynamicTypeApp(Bottle):
         self._conn.commit()
 
         # Define routes
-        self.route("/types", method="POST", callback=self.add_type)
-        self.route("/types", method="GET", callback=self.list_types)
-        self.route("/types/<type_id>", method="GET", callback=self.get_type)
-        self.route("/types/<type_id>", method="DELETE", callback=self.delete_type)
+        self.route("/types", method="POST", callback=self.op_type_create)
+        self.route("/types", method="GET", callback=self.op_type_read_all)
+        self.route("/types/<type_id>", method="GET", callback=self.op_type_read)
+        self.route("/types/<type_id>", method="DELETE", callback=self.op_type_delete)
 
-        self.route("/objects/<type_id>", method="POST", callback=self.add_object)
-        self.route("/objects/<type_id>", method="GET", callback=self.list_objects)
+        self.route("/objects/<type_id>", method="POST", callback=self.op_object_create)
+        self.route("/objects/<type_id>", method="GET", callback=self.op_object_read_all)
         self.route(
             "/objects/<type_id>/<object_id:int>",
             method="PUT",
-            callback=self.update_object,
+            callback=self.op_object_update,
         )
         self.route(
-            "/objects/<type_id>/<object_id:int>", method="GET", callback=self.get_object
+            "/objects/<type_id>/<object_id:int>",
+            method="GET",
+            callback=self.op_object_read,
         )
         self.route(
             "/objects/<type_id>/<object_id:int>",
             method="DELETE",
-            callback=self.delete_object,
+            callback=self.op_object_delete,
         )
 
         # In DynamicTypeApp.__init__
@@ -117,7 +119,7 @@ class DynamicTypeApp(Bottle):
         self._conn.commit()
         return table_name
 
-    def add_type(self):
+    def op_type_create(self):
         # Parse JSON type schema
         type_schema = request.json
         if not type_schema:
@@ -200,7 +202,7 @@ class DynamicTypeApp(Bottle):
             "message": f"Type '{type_id}' stored and table created",
         }
 
-    def list_types(self):
+    def op_type_read_all(self):
         # Fetch all type metadata
         self._cursor.execute(
             "SELECT type_id, type_schema, table_name FROM type_metadata"
@@ -219,7 +221,7 @@ class DynamicTypeApp(Bottle):
 
         return {"status": "success", "types": types_list}
 
-    def get_type(self, type_id):
+    def op_type_read(self, type_id):
         # Fetch type metadata
         self._cursor.execute(
             "SELECT type_id, type_schema, table_name FROM type_metadata WHERE type_id = ?",
@@ -240,7 +242,7 @@ class DynamicTypeApp(Bottle):
 
         return {"status": "success", "type": type_data}
 
-    def delete_type(self, type_id):
+    def op_type_delete(self, type_id):
         # Check if type exists
         self._cursor.execute(
             "SELECT table_name FROM type_metadata WHERE type_id = ?", (type_id,)
@@ -299,7 +301,7 @@ class DynamicTypeApp(Bottle):
         schema_props["extra_properties"] = json.dumps(extra_props)
         return result["table_name"], schema_props
 
-    def add_object(self, type_id):
+    def op_object_create(self, type_id):
         table_name, schema_props = self.validate_object(type_id, request.json)
 
         columns = list(schema_props.keys())
@@ -321,7 +323,7 @@ class DynamicTypeApp(Bottle):
             "message": "Object inserted successfully",
         }
 
-    def update_object(self, type_id, object_id):
+    def op_object_update(self, type_id, object_id):
         table_name, schema_props = self.validate_object(type_id, request.json)
 
         columns = list(schema_props.keys())
@@ -340,7 +342,7 @@ class DynamicTypeApp(Bottle):
 
         return {"status": "success", "object_id": object_id}
 
-    def list_objects(self, type_id):
+    def op_object_read_all(self, type_id):
         # Retrieve table name
         sql_cmd = "SELECT table_name FROM type_metadata WHERE type_id = ?"
         self._cursor.execute(sql_cmd, (type_id,))
@@ -372,7 +374,7 @@ class DynamicTypeApp(Bottle):
 
         return {"status": "success", "type_id": type_id, "objects": objects}
 
-    def get_object(self, type_id, object_id):
+    def op_object_read(self, type_id, object_id):
         # Retrieve table name
         self._cursor.execute(
             "SELECT table_name FROM type_metadata WHERE type_id = ?", (type_id,)
@@ -391,24 +393,22 @@ class DynamicTypeApp(Bottle):
             raise HTTPError(HTTPStatus.NOT_FOUND, {"error": "object not found"})
 
         # Convert row to dictionary (using Dict row factory)
-        object_data = dict(row)
+        data = dict(row)
 
         # Parse extra_properties from JSON
-        if object_data.get("extra_properties"):
-            object_data["extra_properties"] = json.loads(
-                object_data["extra_properties"]
-            )
+        if data.get("extra_properties"):
+            data["extra_properties"] = json.loads(data["extra_properties"])
         else:
-            object_data["extra_properties"] = {}
+            data["extra_properties"] = {}
 
         return {
             "status": "success",
             "type_id": type_id,
             "object_id": object_id,
-            "data": object_data,
+            "data": data,
         }
 
-    def delete_object(self, type_id, object_id):
+    def op_object_delete(self, type_id, object_id):
         # Retrieve table name
         self._cursor.execute(
             "SELECT table_name FROM type_metadata WHERE type_id = ?", (type_id,)
