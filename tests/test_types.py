@@ -51,7 +51,7 @@ def test_types_get_multiple_types(test_client, valid_type_schema):
         assert type_data["table_name"] == f"objects_type_{type_data['type_id'][-1]}"
 
 
-def test_types_get_database_error(test_client, app, mocker):
+def test_types_get_database_error_on_all(test_client, app, mocker):
     """Test GET /types with a simulated database error."""
     mock_cursor = Mock()
     mock_cursor.execute.side_effect = sqlite3.Error("Database failure")
@@ -60,6 +60,22 @@ def test_types_get_database_error(test_client, app, mocker):
     assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
     data = response.json
     assert data["error"] == "Database error: Database failure"
+
+
+def test_types_get_database_error_on_single(
+    test_client, app, mocker, valid_type_schema
+):
+    """Test GET /types/<type_id> with simulated database error."""
+    post_response = test_client.post_json("/types", valid_type_schema)
+    assert post_response.status_code == HTTPStatus.OK
+    type_id = valid_type_schema["title"]
+    mock_cursor = Mock()
+    mock_cursor.execute.side_effect = sqlite3.Error("Database failure")
+    mocker.patch.object(app, "_cursor", mock_cursor)
+    response = test_client.get(f"/types/{type_id}", expect_errors=True)
+    assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
+    data = response.json
+    assert data["error"].startswith("Database error: Database failure")
 
 
 def test_types_get_malformed_schema(test_client, app):
@@ -125,6 +141,28 @@ def test_types_get_cache_consistency(test_client, app, valid_type_schema):
     assert data["status"] == "success"
     assert len(data["types"]) == 1
     assert data["types"][0]["type_id"] == valid_type_schema["title"]
+
+
+def test_types_get_existing(test_client, valid_type_schema):
+    """Test GET /types/<type_id> for existing type."""
+    post_response = test_client.post_json("/types", valid_type_schema)
+    assert post_response.status_code == HTTPStatus.OK
+    type_id = valid_type_schema["title"]
+    response = test_client.get(f"/types/{type_id}")
+    assert response.status_code == HTTPStatus.OK
+    data = response.json
+    assert data["status"] == "success"
+    assert data["type"]["type_id"] == type_id
+    assert data["type"]["type_schema"] == valid_type_schema
+    assert data["type"]["table_name"].startswith("objects_")
+
+
+def test_types_get_non_existent(test_client):
+    """Test GET /types/<type_id> for non-existent type."""
+    response = test_client.get("/types/non_existent", expect_errors=True)
+    assert response.status_code == HTTPStatus.NOT_FOUND
+    data = response.json
+    assert data == {"error": "Type not found", "type": "non_existent"}
 
 
 def test_types_post_valid(test_client, valid_type_schema):
@@ -202,8 +240,10 @@ def test_types_post_missing_required_property(test_client, valid_type_schema):
     response = test_client.post_json("/types", schema, expect_errors=True)
     assert response.status_code == HTTPStatus.BAD_REQUEST
     data = response.json
-    assert "error" in data
-    assert "Type schema must include properties: status" in data["error"]
+    assert data == {
+        "error": "Mandatory properties are missing",
+        "missing_props": ["status"],
+    }
 
 
 def test_types_post_invalid_json(test_client):
@@ -223,8 +263,7 @@ def test_types_post_duplicate_type_id(test_client, valid_type_schema):
     response = test_client.post_json("/types", valid_type_schema, expect_errors=True)
     assert response.status_code == HTTPStatus.CONFLICT
     data = response.json
-    assert "error" in data
-    assert "Type 'test_type' already exists" in data["error"]
+    assert data == {"error": "Type already exists", "type": "test_type"}
 
 
 def test_types_post_database_error(test_client, app, mocker, valid_type_schema):
@@ -238,44 +277,7 @@ def test_types_post_database_error(test_client, app, mocker, valid_type_schema):
     assert data["error"].startswith("Database error: Database failure")
 
 
-def test_get_type_existing(test_client, valid_type_schema):
-    """Test GET /types/<type_id> for existing type."""
-    post_response = test_client.post_json("/types", valid_type_schema)
-    assert post_response.status_code == HTTPStatus.OK
-    type_id = valid_type_schema["title"]
-    response = test_client.get(f"/types/{type_id}")
-    assert response.status_code == HTTPStatus.OK
-    data = response.json
-    assert data["status"] == "success"
-    assert data["type"]["type_id"] == type_id
-    assert data["type"]["type_schema"] == valid_type_schema
-    assert data["type"]["table_name"].startswith("objects_")
-
-
-def test_get_type_non_existent(test_client):
-    """Test GET /types/<type_id> for non-existent type."""
-    response = test_client.get("/types/non_existent", expect_errors=True)
-    assert response.status_code == HTTPStatus.NOT_FOUND
-    data = response.json
-    assert "error" in data
-    assert "Type 'non_existent' not found" in data["error"]
-
-
-def test_get_type_database_error(test_client, app, mocker, valid_type_schema):
-    """Test GET /types/<type_id> with simulated database error."""
-    post_response = test_client.post_json("/types", valid_type_schema)
-    assert post_response.status_code == HTTPStatus.OK
-    type_id = valid_type_schema["title"]
-    mock_cursor = Mock()
-    mock_cursor.execute.side_effect = sqlite3.Error("Database failure")
-    mocker.patch.object(app, "_cursor", mock_cursor)
-    response = test_client.get(f"/types/{type_id}", expect_errors=True)
-    assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
-    data = response.json
-    assert data["error"].startswith("Database error: Database failure")
-
-
-def test_delete_type_existing(test_client, valid_type_schema):
+def test_types_delete_existing(test_client, valid_type_schema):
     """Test DELETE /types/<type_id> for existing type."""
     post_response = test_client.post_json("/types", valid_type_schema)
     assert post_response.status_code == HTTPStatus.OK
@@ -289,16 +291,16 @@ def test_delete_type_existing(test_client, valid_type_schema):
     assert get_response.status_code == HTTPStatus.NOT_FOUND
 
 
-def test_delete_type_non_existent(test_client):
+def test_types_delete_non_existent(test_client):
     """Test DELETE /types/<type_id> for non-existent type."""
     response = test_client.delete("/types/non_existent", expect_errors=True)
     assert response.status_code == HTTPStatus.NOT_FOUND
     data = response.json
-    assert "error" in data
-    assert "Type 'non_existent' not found" in data["error"]
+    print("=== data", data)
+    assert data == {"error": "Type not found", "type": "non_existent"}
 
 
-def test_delete_type_database_error(test_client, app, mocker, valid_type_schema):
+def test_types_delete_database_error(test_client, app, mocker, valid_type_schema):
     """Test DELETE /types/<type_id> with simulated database error."""
     post_response = test_client.post_json("/types", valid_type_schema)
     assert post_response.status_code == HTTPStatus.OK

@@ -34,6 +34,11 @@ class DynamicTypeApp(Bottle):
         self.route("/objects/<type_id>", method="POST", callback=self.add_object)
         self.route("/objects/<type_id>", method="GET", callback=self.list_objects)
         self.route(
+            "/objects/<type_id>/<object_id:int>",
+            method="PUT",
+            callback=self.update_object,
+        )
+        self.route(
             "/objects/<type_id>/<object_id:int>", method="GET", callback=self.get_object
         )
         self.route(
@@ -42,11 +47,25 @@ class DynamicTypeApp(Bottle):
             callback=self.delete_object,
         )
 
+        # In DynamicTypeApp.__init__
         self.default_error_handler = self.custom_error_handler
 
     def custom_error_handler(self, error):
-        print("=== error handler", type(error), error)
+        print("=== error handler", type(error), vars(error), error)
         response.content_type = "application/json"
+        response.status = error.status_code
+        if (
+            isinstance(error, HTTPError)
+            and error.exception is None
+            and error.body is not None
+        ):
+            try:
+                json.loads(error.body)
+            except json.decoder.JSONDecodeError:
+                error.body = json.dumps({"error": error.body})
+            return error.body
+
+        print("=== error handler", "many such cases")
         if isinstance(error, HTTPError) and isinstance(error.exception, sqlite3.Error):
             response.status = 500
             return json.dumps({"error": f"Database error: {str(error.exception)}"})
@@ -112,7 +131,9 @@ class DynamicTypeApp(Bottle):
         # Parse JSON type schema
         type_schema = request.json
         if not type_schema:
-            raise HTTPError(HTTPStatus.BAD_REQUEST, "No JSON type schema provided")
+            raise HTTPError(
+                HTTPStatus.BAD_REQUEST, {"error": "No JSON type schema provided"}
+            )
 
         # Enforce valid SQL column names for properties
         type_schema["propertyNames"] = {"pattern": "^[a-zA-Z0-9_]+$"}
@@ -131,7 +152,10 @@ class DynamicTypeApp(Bottle):
         if missing_props:
             raise HTTPError(
                 HTTPStatus.BAD_REQUEST,
-                f"Type schema must include properties: {', '.join(missing_props)}",
+                {
+                    "error": "Mandatory properties are missing",
+                    "missing_props": missing_props,
+                },
             )
 
         # Ensure properties match expected definitions
@@ -139,7 +163,11 @@ class DynamicTypeApp(Bottle):
             if properties.get(prop) != prop_schema:
                 raise HTTPError(
                     HTTPStatus.BAD_REQUEST,
-                    f"Property '{prop}' must match schema: {json.dumps(prop_schema)}",
+                    {
+                        "error": "Mandatory property must match its schema",
+                        "prop": prop,
+                        "schema": json.dumps(prop_schema),
+                    },
                 )
 
         # Ensure mandatory properties are in required list
@@ -152,12 +180,17 @@ class DynamicTypeApp(Bottle):
         try:
             Draft7Validator.check_schema(type_schema)
         except ValidationError as e:
-            raise HTTPError(HTTPStatus.BAD_REQUEST, f"Invalid JSON schema: {str(e)}")
+            raise HTTPError(
+                HTTPStatus.BAD_REQUEST,
+                {"error": "Invalid JSON schema", "details": str(e)},
+            )
 
         # Get type_id
         type_id = type_schema.get("title", f"type_{len(self._types) + 1}")
         if type_id in self._types:
-            raise HTTPError(HTTPStatus.CONFLICT, f"Type '{type_id}' already exists")
+            raise HTTPError(
+                HTTPStatus.CONFLICT, {"error": "Type already exists", "type": type_id}
+            )
 
         # Create SQLite table
         table_name = self.create_sql_table(type_id, type_schema)
@@ -204,7 +237,9 @@ class DynamicTypeApp(Bottle):
         )
         row = self._cursor.fetchone()
         if not row:
-            raise HTTPError(HTTPStatus.NOT_FOUND, f"Type '{type_id}' not found")
+            raise HTTPError(
+                HTTPStatus.NOT_FOUND, {"error": "Type not found", "type": type_id}
+            )
 
         # Convert row to dictionary
         type_data = {
@@ -222,7 +257,9 @@ class DynamicTypeApp(Bottle):
         )
         result = self._cursor.fetchone()
         if not result:
-            raise HTTPError(HTTPStatus.NOT_FOUND, f"Type '{type_id}' not found")
+            raise HTTPError(
+                HTTPStatus.NOT_FOUND, {"error": "Type not found", "type": type_id}
+            )
         table_name = result["table_name"]
 
         # Drop the associated table
@@ -240,62 +277,52 @@ class DynamicTypeApp(Bottle):
             "message": f"Type '{type_id}' and its objects deleted successfully",
         }
 
-    def add_object(self, type_id):
-        # Parse object data
-        data = request.json
+    def validate_object(self, type_id, data):
         if not data:
-            raise HTTPError(HTTPStatus.BAD_REQUEST, "No JSON data provided")
+            raise HTTPError(HTTPStatus.BAD_REQUEST, {"error": "No JSON data provided"})
 
-        # Retrieve type schema
-        type_schema = self._types.get(type_id)
-        if not type_schema:
-            # Check database for type
-            self._cursor.execute(
-                "SELECT type_schema, table_name FROM type_metadata WHERE type_id = ?",
-                (type_id,),
+        self._cursor.execute(
+            "SELECT type_schema, table_name FROM type_metadata WHERE type_id = ?",
+            (type_id,),
+        )
+        result = self._cursor.fetchone()
+        if not result:
+            raise HTTPError(
+                HTTPStatus.NOT_FOUND, {"error": "Type not found", "type": type_id}
             )
-            result = self._cursor.fetchone()
-            if not result:
-                raise HTTPError(HTTPStatus.NOT_FOUND, f"Type '{type_id}' not found")
-            type_schema = json.loads(result["type_schema"])
-            self._types[type_id] = type_schema  # Cache type schema
-            table_name = result["table_name"]
-        else:
-            table_name = self._cursor.execute(
-                "SELECT table_name FROM type_metadata WHERE type_id = ?", (type_id,)
-            ).fetchone()["table_name"]
+        type_schema = json.loads(result["type_schema"])
 
-        # Validate object against type schema
         try:
             validate(instance=data, schema=type_schema)
         except ValidationError as e:
-            print("=== object validation:", type(e), vars(e), e)
-            response.status = HTTPStatus.BAD_REQUEST
-            return {
-                "error": "Validation failed",
-                "details": {"path": f"{'/'.join(e.path)}", "message": e.message},
-            }
-
-        # Separate schema-defined properties and extra properties
-        properties = type_schema.get("properties", {})
-        defined_props = properties.keys()
+            raise HTTPError(
+                HTTPStatus.BAD_REQUEST,
+                {
+                    "error": "Validation failed",
+                    "path": "/".join(e.path),
+                    "message": e.message,
+                },
+            )
+        defined_props = type_schema.get("properties", {}).keys()
         schema_props = {prop: data.get(prop) for prop in defined_props}
         extra_props = {k: v for k, v in data.items() if k not in defined_props}
+        schema_props["extra_properties"] = json.dumps(extra_props)
+        return result["table_name"], schema_props
 
-        # Prepare SQL columns and values
-        columns = list(
-            defined_props
-        )  # Use property names directly (validated as legal)
-        columns.append("extra_properties")
-        values = [schema_props.get(prop) for prop in defined_props]
-        values.append(json.dumps(extra_props) if extra_props else None)
+    def add_object(self, type_id):
+        table_name, schema_props = self.validate_object(type_id, request.json)
+
+        columns = list(schema_props.keys())
+        values = list(schema_props.values())
 
         # Insert object into table
         placeholders = ", ".join(["?" for _ in columns])
-        insert_sql = (
+        sql_cmd = (
             f"INSERT INTO {table_name} ({', '.join(columns)}) VALUES ({placeholders})"
         )
-        self._cursor.execute(insert_sql, values)
+        print("sql insert", sql_cmd)
+        print("sql insert", values)
+        self._cursor.execute(sql_cmd, values)
         self._conn.commit()
         object_id = self._cursor.lastrowid
 
@@ -306,14 +333,34 @@ class DynamicTypeApp(Bottle):
             "message": "Object inserted successfully",
         }
 
+    def update_object(self, type_id, object_id):
+        table_name, schema_props = self.validate_object(type_id, request.json)
+
+        columns = list(schema_props.keys())
+        values = list(schema_props.values())
+
+        self._cursor.execute(f"SELECT * FROM {table_name} WHERE id = ?", (object_id,))
+        if not self._cursor.fetchone():
+            raise HTTPError(
+                HTTPStatus.NOT_FOUND, {"error": "Object not found", "object": object_id}
+            )
+
+        values.append(object_id)
+        sql_cmd = f"UPDATE {table_name} SET {', '.join(f'{col} = ?' for col in columns)} WHERE id = ?"
+        self._cursor.execute(sql_cmd, values)
+        self._conn.commit()
+
+        return {"status": "success", "object_id": object_id}
+
     def list_objects(self, type_id):
         # Retrieve table name
-        self._cursor.execute(
-            "SELECT table_name FROM type_metadata WHERE type_id = ?", (type_id,)
-        )
+        sql_cmd = "SELECT table_name FROM type_metadata WHERE type_id = ?"
+        self._cursor.execute(sql_cmd, (type_id,))
         result = self._cursor.fetchone()
         if not result:
-            raise HTTPError(HTTPStatus.NOT_FOUND, f"Type '{type_id}' not found")
+            raise HTTPError(
+                HTTPStatus.NOT_FOUND, {"error": "Type not found", "type": type_id}
+            )
         table_name = result["table_name"]
 
         # Fetch all objects
@@ -344,17 +391,17 @@ class DynamicTypeApp(Bottle):
         )
         result = self._cursor.fetchone()
         if not result:
-            raise HTTPError(HTTPStatus.NOT_FOUND, f"Type '{type_id}' not found")
+            raise HTTPError(
+                HTTPStatus.NOT_FOUND, {"error": "Type not found", "type": type_id}
+            )
         table_name = result["table_name"]
 
         # Fetch object
         self._cursor.execute(f"SELECT * FROM {table_name} WHERE id = ?", (object_id,))
         row = self._cursor.fetchone()
+        print("=== here", row)
         if not row:
-            raise HTTPError(
-                HTTPStatus.NOT_FOUND,
-                f"Object {object_id} not found in type '{type_id}'",
-            )
+            raise HTTPError(HTTPStatus.NOT_FOUND, {"error": "object not found"})
 
         # Convert row to dictionary (using Dict row factory)
         object_data = dict(row)
@@ -381,16 +428,15 @@ class DynamicTypeApp(Bottle):
         )
         result = self._cursor.fetchone()
         if not result:
-            raise HTTPError(HTTPStatus.NOT_FOUND, f"Type '{type_id}' not found")
+            raise HTTPError(
+                HTTPStatus.NOT_FOUND, {"error": "Type not found", "type": type_id}
+            )
         table_name = result["table_name"]
 
         # Check if object exists
         self._cursor.execute(f"SELECT id FROM {table_name} WHERE id = ?", (object_id,))
         if not self._cursor.fetchone():
-            raise HTTPError(
-                HTTPStatus.NOT_FOUND,
-                f"Object {object_id} not found in type '{type_id}'",
-            )
+            raise HTTPError(HTTPStatus.NOT_FOUND, {"error": "object not found"})
 
         # Delete object
         self._cursor.execute(f"DELETE FROM {table_name} WHERE id = ?", (object_id,))

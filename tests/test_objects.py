@@ -47,7 +47,8 @@ def test_objects_post_invalid_schema(test_client, valid_type):
     data = response.json
     assert data == {
         "error": "Validation failed",
-        "details": {"path": "status", "message": "'invalid' is not of type 'integer'"},
+        "path": "status",
+        "message": "'invalid' is not of type 'integer'",
     }
 
 
@@ -62,7 +63,8 @@ def test_objects_post_missing_required(test_client, valid_type):
     data = response.json
     assert data == {
         "error": "Validation failed",
-        "details": {"path": "", "message": "'status' is a required property"},
+        "path": "",
+        "message": "'status' is a required property",
     }
 
 
@@ -73,7 +75,7 @@ def test_objects_post_non_existent_type(test_client, valid_object_data):
     )
     assert response.status_code == HTTPStatus.NOT_FOUND
     data = response.json
-    assert data == {"error": "Type 'non_existent' not found"}
+    assert data == {"error": "Type not found", "type": "non_existent"}
 
 
 def test_objects_post_database_error(
@@ -94,7 +96,7 @@ def test_objects_post_database_error(
     assert "Database error" in data["error"]
 
 
-def test_get_objects_empty(test_client, valid_type_schema):
+def test_objects_get_empty(test_client, valid_type_schema):
     """Test GET /objects/<type_id> with no objects."""
     type_id = valid_type_schema["title"]
     test_client.post_json("/types", valid_type_schema)
@@ -105,7 +107,7 @@ def test_get_objects_empty(test_client, valid_type_schema):
     assert data["objects"] == []
 
 
-def test_get_objects_single(test_client, valid_type, valid_object_data):
+def test_objects_get_single(test_client, valid_type, valid_object_data):
     """Test GET /objects/<type_id> with one object."""
     type_id = valid_type["title"]
     post_response = test_client.post_json(f"/objects/{type_id}", valid_object_data)
@@ -120,15 +122,15 @@ def test_get_objects_single(test_client, valid_type, valid_object_data):
     assert data["objects"][0]["status"] == valid_object_data["status"]
 
 
-def test_get_objects_non_existent_type(test_client):
+def test_objects_get_non_existent_type(test_client):
     """Test GET /objects/<type_id> with non-existent type_id."""
     response = test_client.get("/objects/non_existent", expect_errors=True)
     assert response.status_code == HTTPStatus.NOT_FOUND
     data = response.json
-    assert data == {"error": "Type 'non_existent' not found"}
+    assert data == {"error": "Type not found", "type": "non_existent"}
 
 
-def test_get_objects_database_error(test_client, app, mocker, valid_type_schema):
+def test_objects_get_database_error(test_client, app, mocker, valid_type_schema):
     """Test GET /objects/<type_id> with simulated database error."""
     type_id = valid_type_schema["title"]
     test_client.post_json("/types", valid_type_schema)
@@ -163,15 +165,8 @@ def test_objects_get_non_existent(test_client, valid_type):
     response = test_client.get(f"/objects/{type_id}/non_existent", expect_errors=True)
     assert response.status_code == HTTPStatus.NOT_FOUND
     data = response.json
+    print("=== data", data)
     assert data == {"error": "Not found: '/objects/test_type/non_existent'"}
-
-
-def test_objects_get_non_existent_type(test_client):
-    """Test GET /objects/<type_id>/<object_id> with non-existent type."""
-    response = test_client.get("/objects/non_existent/1", expect_errors=True)
-    assert response.status_code == HTTPStatus.NOT_FOUND
-    data = response.json
-    assert data == {"error": "Type 'non_existent' not found"}
 
 
 def test_objects_delete_existing(test_client, valid_type, valid_object_data):
@@ -208,7 +203,7 @@ def test_objects_delete_non_existent_type(test_client):
     response = test_client.delete("/objects/non_existent/1", expect_errors=True)
     assert response.status_code == HTTPStatus.NOT_FOUND
     data = response.json
-    assert data == {"error": "Type 'non_existent' not found"}
+    assert data == {"error": "Type not found", "type": "non_existent"}
 
 
 def test_objects_delete_database_error(
