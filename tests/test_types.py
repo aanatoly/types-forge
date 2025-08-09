@@ -59,7 +59,7 @@ def test_types_get_database_error_on_all(test_client, app, mocker):
     response = test_client.get("/types", status="*", expect_errors=True)
     assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
     data = response.json
-    assert data["error"] == "Database error: Database failure"
+    assert data == {"error": "Database error", "details": "Database failure"}
 
 
 def test_types_get_database_error_on_single(
@@ -75,7 +75,7 @@ def test_types_get_database_error_on_single(
     response = test_client.get(f"/types/{type_id}", expect_errors=True)
     assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
     data = response.json
-    assert data["error"].startswith("Database error: Database failure")
+    assert data == {"error": "Database error", "details": "Database failure"}
 
 
 def test_types_get_malformed_schema(test_client, app):
@@ -274,7 +274,7 @@ def test_types_post_database_error(test_client, app, mocker, valid_type_schema):
     response = test_client.post_json("/types", valid_type_schema, expect_errors=True)
     assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
     data = response.json
-    assert data["error"].startswith("Database error: Database failure")
+    assert data == {"error": "Database error", "details": "Database failure"}
 
 
 def test_types_delete_existing(test_client, valid_type_schema):
@@ -296,7 +296,6 @@ def test_types_delete_non_existent(test_client):
     response = test_client.delete("/types/non_existent", expect_errors=True)
     assert response.status_code == HTTPStatus.NOT_FOUND
     data = response.json
-    print("=== data", data)
     assert data == {"error": "Type not found", "type": "non_existent"}
 
 
@@ -311,4 +310,4 @@ def test_types_delete_database_error(test_client, app, mocker, valid_type_schema
     response = test_client.delete(f"/types/{type_id}", expect_errors=True)
     assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
     data = response.json
-    assert data["error"].startswith("Database error: Database failure")
+    assert data == {"error": "Database error", "details": "Database failure"}

@@ -165,7 +165,6 @@ def test_objects_get_non_existent(test_client, valid_type):
     response = test_client.get(f"/objects/{type_id}/non_existent", expect_errors=True)
     assert response.status_code == HTTPStatus.NOT_FOUND
     data = response.json
-    print("=== data", data)
     assert data == {"error": "Not found: '/objects/test_type/non_existent'"}
 
 
@@ -220,4 +219,140 @@ def test_objects_delete_database_error(
     response = test_client.delete(f"/objects/{type_id}/{object_id}", expect_errors=True)
     assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
     data = response.json
-    assert data == {"error": "Database error: Database failure"}
+    assert data == {"error": "Database error", "details": "Database failure"}
+
+
+def test_objects_put_valid_full_update(test_client, valid_type, valid_object_data):
+    """Test PUT /objects/<type_id>/<object_id> with valid full update."""
+    type_id = valid_type["title"]
+    post_response = test_client.post_json(f"/objects/{type_id}", valid_object_data)
+    assert post_response.status_code == HTTPStatus.OK
+    object_id = post_response.json["object_id"]
+    updated_data = {
+        "title": "Updated Object",
+        "icon": "new.png",
+        "status": 2,
+        "extra_field": 100,
+    }
+    response = test_client.put_json(f"/objects/{type_id}/{object_id}", updated_data)
+    assert response.status_code == HTTPStatus.OK
+    data = response.json
+    print("=== data", data)
+    assert data == {"status": "success", "object_id": object_id}
+    response = test_client.get(f"/objects/{type_id}/{object_id}")
+    assert response.status_code == HTTPStatus.OK
+    data = response.json
+    updated_data["id"] = object_id
+    updated_data["extra_properties"] = {}
+    assert data["data"] == updated_data
+
+
+def test_objects_put_missing_required(test_client, valid_type, valid_object_data):
+    """Test PUT /objects/<type_id>/<object_id> with missing required property."""
+    type_id = valid_type["title"]
+    post_response = test_client.post_json(f"/objects/{type_id}", valid_object_data)
+    assert post_response.status_code == HTTPStatus.OK
+    object_id = post_response.json["object_id"]
+    invalid_data = {
+        "title": "Incomplete Object",
+        "icon": "incomplete.png",
+        "extra_field": 50,
+    }
+    response = test_client.put_json(
+        f"/objects/{type_id}/{object_id}", invalid_data, expect_errors=True
+    )
+    assert response.status_code == HTTPStatus.BAD_REQUEST
+    data = response.json
+    assert data == {
+        "error": "Validation failed",
+        "path": "",
+        "message": "'status' is a required property",
+    }
+
+
+def test_objects_put_invalid_schema(test_client, valid_type, valid_object_data):
+    """Test PUT /objects/<type_id>/<object_id> with invalid schema data."""
+    type_id = valid_type["title"]
+    post_response = test_client.post_json(f"/objects/{type_id}", valid_object_data)
+    assert post_response.status_code == HTTPStatus.OK
+    object_id = post_response.json["object_id"]
+    invalid_data = {
+        "title": "Invalid Object",
+        "icon": "invalid.png",
+        "status": "invalid",
+        "extra_field": 50,
+    }
+    response = test_client.put_json(
+        f"/objects/{type_id}/{object_id}", invalid_data, expect_errors=True
+    )
+    assert response.status_code == HTTPStatus.BAD_REQUEST
+    data = response.json
+    assert data == {
+        "error": "Validation failed",
+        "path": "status",
+        "message": "'invalid' is not of type 'integer'",
+    }
+
+
+def test_objects_put_non_existent_type(test_client, valid_object_data):
+    """Test PUT /objects/<type_id>/<object_id> with non-existent type."""
+    response = test_client.put_json(
+        "/objects/non_existent/1", valid_object_data, expect_errors=True
+    )
+    assert response.status_code == HTTPStatus.NOT_FOUND
+    data = response.json
+    assert data == {"error": "Type not found", "type": "non_existent"}
+
+
+def test_objects_put_non_existent_object(test_client, valid_type, valid_object_data):
+    """Test PUT /objects/<type_id>/<object_id> with non-existent object."""
+    type_id = valid_type["title"]
+    response = test_client.put_json(
+        f"/objects/{type_id}/non_existent", valid_object_data, expect_errors=True
+    )
+    assert response.status_code == HTTPStatus.NOT_FOUND
+    data = response.json
+    assert data == {"error": "Not found: '/objects/test_type/non_existent'"}
+
+
+def test_objects_put_invalid_json(test_client, valid_type, valid_object_data):
+    """Test PUT /objects/<type_id>/<object_id> with invalid JSON."""
+    type_id = valid_type["title"]
+    post_response = test_client.post_json(f"/objects/{type_id}", valid_object_data)
+    assert post_response.status_code == HTTPStatus.OK
+    object_id = post_response.json["object_id"]
+    response = test_client.put(
+        f"/objects/{type_id}/{object_id}",
+        "{invalid",
+        content_type="application/json",
+        expect_errors=True,
+    )
+    assert response.status_code == HTTPStatus.BAD_REQUEST
+    data = response.json
+    assert data["error"] == "JSON decode error"
+
+
+def test_objects_put_database_error(
+    test_client, app, mocker, valid_type, valid_object_data
+):
+    """Test PUT /objects/<type_id>/<object_id> with simulated database error."""
+    type_id = valid_type["title"]
+    post_response = test_client.post_json(f"/objects/{type_id}", valid_object_data)
+    assert post_response.status_code == HTTPStatus.OK
+    object_id = post_response.json["object_id"]
+    updated_data = {
+        "title": "Updated Object",
+        "icon": "new.png",
+        "status": 2,
+        "extra_field": 100,
+    }
+    mock_cursor = Mock()
+    mock_cursor.execute.side_effect = sqlite3.Error("Database failure")
+    mocker.patch.object(app, "_cursor", mock_cursor)
+    response = test_client.put_json(
+        f"/objects/{type_id}/{object_id}", updated_data, expect_errors=True
+    )
+    assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
+    data = response.json
+    assert "error" in data
+    assert "Database error" in data["error"]

@@ -54,39 +54,29 @@ class DynamicTypeApp(Bottle):
         print("=== error handler", type(error), vars(error), error)
         response.content_type = "application/json"
         response.status = error.status_code
-        if (
-            isinstance(error, HTTPError)
-            and error.exception is None
-            and error.body is not None
-        ):
+
+        if not isinstance(error, HTTPError):
+            response.status = 400
+            return json.dumps(
+                {"error": "Unexpected error", "details": str(error.exception)}
+            )
+
+        if error.exception is None:
             try:
                 json.loads(error.body)
             except json.decoder.JSONDecodeError:
                 error.body = json.dumps({"error": error.body})
             return error.body
-
-        print("=== error handler", "many such cases")
-        if isinstance(error, HTTPError) and isinstance(error.exception, sqlite3.Error):
+        if isinstance(error.exception, sqlite3.Error):
             response.status = 500
-            return json.dumps({"error": f"Database error: {str(error.exception)}"})
-        elif isinstance(error, HTTPError) and isinstance(
-            error.exception, json.JSONDecodeError
-        ):
-            response.status = 400
-            return json.dumps({"error": f"JSON decode error: {str(error.exception)}"})
-        elif isinstance(error, HTTPError):
-            response.status = error.status_code
-            return json.dumps({"error": error.body})
-        elif isinstance(error.exception, json.JSONDecodeError):
-            response.status = 400
-            return json.dumps({"error": f"JSON decode error: {str(error.exception)}"})
-        elif isinstance(error.exception, ValidationError):
+            return json.dumps(
+                {"error": "Database error", "details": str(error.exception)}
+            )
+        if isinstance(error.exception, json.JSONDecodeError):
             response.status = 400
             return json.dumps(
-                {"error": f"Schema validation error: {str(error.exception)}"}
+                {"error": "JSON decode error", "details": str(error.exception)}
             )
-        response.status = 400
-        return json.dumps({"error": f"Unexpected error: {str(error.exception)}"})
 
     def json_prop_type_to_sql_type(self, json_type):
         """Map JSON schema types to SQLite types."""
@@ -320,8 +310,6 @@ class DynamicTypeApp(Bottle):
         sql_cmd = (
             f"INSERT INTO {table_name} ({', '.join(columns)}) VALUES ({placeholders})"
         )
-        print("sql insert", sql_cmd)
-        print("sql insert", values)
         self._cursor.execute(sql_cmd, values)
         self._conn.commit()
         object_id = self._cursor.lastrowid
@@ -399,7 +387,6 @@ class DynamicTypeApp(Bottle):
         # Fetch object
         self._cursor.execute(f"SELECT * FROM {table_name} WHERE id = ?", (object_id,))
         row = self._cursor.fetchone()
-        print("=== here", row)
         if not row:
             raise HTTPError(HTTPStatus.NOT_FOUND, {"error": "object not found"})
 
